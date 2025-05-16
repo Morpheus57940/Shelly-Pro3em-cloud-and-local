@@ -1,46 +1,66 @@
-# Shelly-Pro3em-cloud-and-local
+// Configuration
+let mqtt_local_topic = "shelly3em/local";
+let mqtt_cloud_topic = "shelly3em/cloud";  // si cloud via MQTT
+let cloud_http_url = "http://ton-serveur-cloud/endpoint";  // si cloud via HTTP POST
 
-Lit les mesures des 3 phases (tension, courant, puissance, énergie, etc.).
+let interval_sec = 60; // Intervalle de publication (en secondes)
+let cloud_via_http = true;  // true = HTTP POST, false = MQTT
 
-Publie les mesures localement via MQTT.
+// Fonction pour récupérer les données des 3 phases
+function get_phases_data() {
+  let data = {
+    time: (new Date()).toISOString(),
+    phase: [],
+    total_power: 0
+  };
 
-Envoie les données dans le cloud (via HTTP ou MQTT vers un serveur distant).
+  for (let i = 0; i < 3; i++) {
+    let em = Shelly.getComponentStatus("em:data", { id: i });
+    if (em !== null) {
+      let p = {
+        id: i+1,
+        voltage: em.voltage,
+        current: em.current,
+        power: em.power,
+        pf: em.pf,
+        total: em.total_act_energy
+      };
+      data.phase.push(p);
+      data.total_power += em.power;
+    }
+  }
+  return data;
+}
 
-Peut fonctionner avec 1, 2 ou 3 phases actives.
+// Fonction de publication locale (MQTT)
+function publish_local(data) {
+  MQTT.publish(mqtt_local_topic, JSON.stringify(data), 0, false);
+}
 
-Est adaptable selon ton besoin.
+// Fonction de publication cloud
+function publish_cloud(data) {
+  if (cloud_via_http) {
+    HTTP.request({
+      url: cloud_http_url,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+      timeout: 5,
+      success: function(res, body) {
+        print("Cloud HTTP POST OK:", res);
+      },
+      error: function(err) {
+        print("HTTP error:", err);
+      }
+    });
+  } else {
+    MQTT.publish(mqtt_cloud_topic, JSON.stringify(data), 0, false);
+  }
+}
 
-
-
----
-
-1. Pré-requis
-
-MQTT activé sur ton Shelly.
-
-Une destination cloud configurée (ex. : une URL HTTP ou un broker MQTT distant).
-
-Adapter le script si tu veux n’utiliser que certaines phases ou un seul type de sortie (local ou cloud).
-
-Explication
-
-Le script lit les données des 3 phases.
-
-Il envoie les mesures toutes les 60 secondes.
-
-Il publie localement sur un broker MQTT (ex. : HiveMQ ou Mosquitto en local).
-
-Il peut aussi envoyer dans le cloud :
-
-Soit via HTTP POST vers ton serveur Web.
-
-Soit via MQTT (si tu mets cloud_via_http = false).
-
-
-
-
-Personnalisation possible
-
-N'utiliser que 2 phases ? => change la boucle for (let i = 0; i < 2; i++)
-
-Ajouter les puissances apparentes, réactives, etc. => adapte Shelly.getComponentStatus.
+// Boucle de mesure + publication
+Timer.set(interval_sec * 1000, true, function () {
+  let data = get_phases_data();
+  publish_local(data);
+  publish_cloud(data);
+}, null);
